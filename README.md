@@ -23,5 +23,5 @@ Kakach Extension Tools
 ***
 Скрипт распространяется по новой лицензии BSD.
 
-Copyright (c) 2012-2013, postman, ayakudere, theanonym, Ananim, Malweena
+Copyright (c) 2012-2026, postman, ayakudere, theanonym, Ananim, Malweena
 
