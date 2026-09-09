@@ -2,7 +2,7 @@
 // @name        Kakach Extension Tools
 // @author      Original by postman, ayakudere, theanonym; forked by Ananim; modernized by malweena
 // @description Какаческрипт с блэкджеком и шлюхами (какач онли)
-// @version     2.0.0 (ca)
+// @version     2.0.1 (ca)
 // @icon        https://web.archive.org/web/20260616043953im_/https://1chan.ca/ico/favicons/1chan.ca.png
 // @downloadURL https://github.com/Malweena/Kakach-Extension-Tools/raw/master/Kakachuserscript.user.js
 // @match       https://1chan.ca/*
@@ -49,6 +49,8 @@
         'Кнопки навигации'
     ];
     const icons = {
+        'smilesKakachOnly': "https://web.archive.org/web/20260616043953im_/https://1chan.ca/ico/favicons/1chan.ca.png",
+        'smilesAll': "https://web.archive.org/web/20260105173919im_/https://wiki.1chan.ca/images/faviconwiki.ico",
         'hide': "https://web.archive.org/web/20110225131301im_/http://static.1chan.ru/ico/oh-my-eyes.png",
         'show': "https://web.archive.org/web/20110225131301im_/http://static.1chan.ru/ico/oh-my-eyes.png",
         'addSmile': "https://web.archive.org/web/20220515043627if_/https://cdn1.iconfinder.com/data/icons/basicset/plus_16.png",
@@ -66,6 +68,74 @@
     var smileySizeCache = {};
     var smileySizePending = {};
 
+    // Режим панели смайликов: 'smilesAll' или 'smilesKakachOnly'
+    var smilesMode = 'smilesAll';
+
+   /*
+    *      Локальная копия движка шаблонов сайта:
+    *      глобальная template() спрятана в замыкании production.js
+    *      и на части страниц юзерскрипту недоступна
+    */
+
+    var ketTemplateCache = {};
+
+    function ketTemplate(str, data) {
+        var fn = !/\W/.test(str) ?
+            ketTemplateCache[str] = ketTemplateCache[str] ||
+                ketTemplate(document.getElementById(str).value) :
+
+            new Function("obj",
+                "var p=[],print=function(){p.push.apply(p,arguments);};" +
+                "with(obj){p.push('" +
+                str
+                    .replace(/[\r\t\n]/g, " ")
+                    .split("<%").join("\t")
+                    .replace(/((^|%>)[^\t]*)'/g, "$1\r")
+                    .replace(/\t=(.*?)%>/g, "',$1,'")
+                    .split("\t").join("');")
+                    .split("%>").join("p.push('")
+                    .split("\r").join("\\'")
+                + "');}return p.join('');");
+
+        return data ? fn(data) : fn;
+    }
+
+    function renderTemplate(str, data) {
+        if (typeof window.template === 'function') {
+            try {
+                return window.template(str, data);
+            } catch(e) {}
+        }
+
+        if (!document.getElementById(str))
+            return null;
+
+        try {
+            return ketTemplate(str, data);
+        } catch(e) {
+            return null;
+        }
+    }
+
+   /*
+    *      focus() без прокрутки страницы к полю ввода
+    *      (иначе клик по смайлу/разметке подбрасывает к форме)
+    */
+
+    function focusNoScroll(el) {
+        if (!el)
+            return;
+
+        try {
+            el.focus({ preventScroll: true });
+        } catch(e) {
+            var x = window.pageXOffset;
+            var y = window.pageYOffset;
+            el.focus();
+            window.scrollTo(x, y);
+        }
+    }
+
     var gifSmileList = [
         "coolface", "desu", "nyan", "sobak", "trollface",
         "makak", "popka", "popka2", "slon", "pauk",
@@ -80,7 +150,7 @@
 
     var gifSmileListSVIN = [
         "kolkun", "mrgreen", "poodel", "sobaken",
-        "sosak", "turtle", "cancer"
+        "sosak", "turtle", "cancer", "droch"
     ];
 
     var pngSmileListSVIN = [
@@ -136,13 +206,30 @@
                         answersPreviewTimeout
                     );
 
-                var id =
-                    $(this)
-                        .text()
-                        .replace(/\D/g, "");
+                // board/id берём из атрибута name ссылки (как это
+                // делает сам движок), разбор текста — запасной вариант
+                var fullId =
+                    ($(this).attr("name") || "").split("/", 2);
 
+                var board, id;
+
+                if (fullId.length > 1 && fullId[1]) {
+                    board = fullId[0];
+                    id = fullId[1];
+                } else {
+                    board = locationPrefix;
+                    id =
+                        $(this)
+                            .text()
+                            .replace(/\D/g, "");
+                }
+
+                // На досках id комментариев — comment_<board>_<id>,
+                // голый comment_<id> есть только в /news/
                 var el =
-                    $("#comment_" + id);
+                    board == 'news'
+                        ? $("#comment_" + id)
+                        : $("#comment_" + board + "_" + id);
 
                 if (el.length != 0) {
 
@@ -189,10 +276,15 @@
                     var link_ = this;
 
                     $.getJSON(
-                        location.protocol +
-                        "//" +
-                        location.host +
-                        "/news/last_comments/",
+                        board == 'news'
+                            ? location.protocol +
+                            "//" +
+                            location.host +
+                            "/news/last_comments/"
+                            : location.protocol +
+                            "//" +
+                            location.host +
+                            "/" + board + "/get/",
                         {
                             id: id
                         },
@@ -203,11 +295,17 @@
                                 data != false
                             ) {
 
-                                var tip =
-                                    $(template(
+                                var tipHtml =
+                                    renderTemplate(
                                         "template_comment",
                                         data
-                                    ))
+                                    );
+
+                                if (!tipHtml)
+                                    return;
+
+                                var tip =
+                                    $(tipHtml)
                                     .mouseover(function(e) {
 
                                         answersPreviewTimeout =
@@ -223,6 +321,7 @@
                                     .css({
                                         display: "block",
                                         width:
+                                            board == 'news' &&
                                             data.post_preview
                                                 ? "520px"
                                                 : "450px",
@@ -231,7 +330,10 @@
                                         left: e.pageX + 8
                                     });
 
-                                if (data.post_preview) {
+                                // Шапку с названием поста имеет смысл
+                                // дорисовывать только в /news/ — у досок
+                                // в ответе /get/ этих полей нет
+                                if (board == 'news' && data.post_preview) {
 
                                     tip
                                         .addClass(
@@ -251,7 +353,7 @@
                                             '(<em>открывающий пост</em>)'
                                         );
 
-                                } else {
+                                } else if (board == 'news') {
 
                                     tip
                                         .find(".js-comment-id")
@@ -390,11 +492,21 @@
     }
 
     function createRepliesMap() {
+        // Карта перестраивается целиком: сначала сносим старые
+        // блоки «Ответы:», иначе при повторном запуске они задублируются
+        var oldAnswers = document.querySelectorAll('[id^="answers_"]');
+        for(var i = 0; i < oldAnswers.length; i++)
+            oldAnswers[i].parentNode.removeChild(oldAnswers[i]);
+
         repliesTable = {};
         var comments = document.getElementsByClassName("b-comment");
 
         for(var i=0; i<comments.length; i++) {
-            current_post = comments[i].id.slice(locationPrefix == 'news' ? 8 :
+            // пропускаем превью-клоны (.m-tip, id снят) и прочие
+            // элементы с классом b-comment (например, окно настроек)
+            if(!/^comment_/.test(comments[i].id))
+                continue;
+            var current_post = comments[i].id.slice(locationPrefix == 'news' ? 8 :
                 (locationPrefix.length + 9) );
             var refs = comments[i].getElementsByClassName("js-cross-link");
             for(var j=0; j<refs.length; j++) {
@@ -405,8 +517,8 @@
                     repliesTable[ref] = [current_post];
             }
         }
-        for(post_num in repliesTable) {
-            container = document.createElement("div");
+        for(var post_num in repliesTable) {
+            var container = document.createElement("div");
             container.id = "answers_"+post_num;
             container.appendChild(document.createElement('p'));
             container = container.lastChild;
@@ -414,8 +526,8 @@
             container.style.padding = '4px';
             container.style.fontSize = '0.8em';
             container.textContent = "Ответы: ";
-            for(post_ref in repliesTable[post_num]) {
-                link = document.createElement("a");
+            for(var post_ref in repliesTable[post_num]) {
+                var link = document.createElement("a");
                 link.className = "js-cross-link";
                 const urlObj = new URL(document.URL);
                 link.href = urlObj.pathname + urlObj.search + '#'+repliesTable[post_num][post_ref];
@@ -426,7 +538,7 @@
                 container.innerHTML += ', ';
             }
             container.innerHTML = container.innerHTML.substring(0, container.innerHTML.length-2);
-            comment = document.getElementById("comment" +
+            var comment = document.getElementById("comment" +
                 (locationPrefix == 'news' ? '_' : ('_' + locationPrefix + '_')) + post_num);
             if(comment)
                 comment.appendChild(container.parentNode);
@@ -434,68 +546,89 @@
       rebindAnswersPreview();
     }
 
+    var commentsRefreshTimer = null;
+
+    function refreshCommentsFeatures() {
+        // Порядок важен: скрытие может удалять посты,
+        // карта ответов строится по оставшимся
+        if(enabledFeatures.indexOf("hiding") != -1)
+            hidePosts();
+        if(enabledFeatures.indexOf("answermap") != -1)
+            createRepliesMap();
+        if(enabledFeatures.indexOf("spoilers") != -1)
+            revealSpoilers();
+        if(enabledFeatures.indexOf("img-spoilers") != -1)
+            revealImageSpoilers();
+    }
+
     function registerAutoupdateHandler() {
         if(/\.ca\/news\/add/.test(document.URL))
             return;
-        document.getElementsByClassName("l-comments-wrap")[0].addEventListener('DOMNodeInserted',
-            function(event) {
-                if(/comment/.test(event.target.id)) {
-                    // Hiding
-                    if(enabledFeatures.indexOf("hiding")!= -1) {
-                        var match = false;
-                        for(var j=0; j<hidePatterns.length; j++)
-                            if(hidePatterns[j].test(event.target.textContent)) {
-                                hidePost(event.target);
-                                break;
-                            }
-                        var hideButton = event.target.getElementsByClassName('b-comment_b-info')[0]
-                                        .getElementsByClassName('js-remove-button')[0];
-                        hideButton.getElementsByTagName('img')[0].setAttribute("src", icons['hide']);
-                        hideButton.style.display = "inline-block";
-                        hideButton.onclick = function() {
-                            hidePost(this.parentNode.parentNode);
-                            return false;
-                        };
-                    }
-                    // Answer map
-                    if(enabledFeatures.indexOf("answermap")!= -1){
-                        refs = event.target.getElementsByClassName("js-cross-link");
-                        for(var j=0; j<refs.length; j++) {
-                            ref = refs[j].name.slice(locationPrefix.length + 1);
-                            link = document.createElement("a");
-                            link.className = "js-cross-link";
-                            var current_post = event.target.id.slice(locationPrefix == 'news' ? 8 :
-                                (locationPrefix.length + 9) );
-                            const urlObj = new URL(document.URL);
-                            link.href = urlObj.pathname + urlObj.search + '#' + current_post;
-                            link.name = locationPrefix + "/" + current_post;
-                            link.textContent = ">>" + current_post;
-                            link.style.fontSize = '1em';
-                            if(container = document.getElementById('answers_'+ref)) { // да, именно =
-                                container = container.lastChild
-                                container.innerHTML += ', ';
-                                container.appendChild(link)
-                            } else {
-                                container = document.createElement("div");
-                                container.id = "answers_" + ref;
-                                container.appendChild(document.createElement('p'));
-                                container = container.lastChild;
-                                container.style.margin = '0px';
-                                container.style.padding = '4px';
-                                container.style.fontSize = '0.8em';
-                                container.textContent = "Ответы: ";
-                                container.appendChild(link)
-                                comment = document.getElementById("comment" +
-                                (locationPrefix == 'news' ? '_' : ('_' + locationPrefix + '_'))
-                                + ref);
-                                if(comment)
-                                    comment.appendChild(container.parentNode);
-                            }
-                        }
-                        rebindAnswersPreview();
+        if(document.getElementsByClassName("l-comments-wrap").length === 0)
+            return;
+        if(!window.MutationObserver)
+            return;
+
+        var observer = new MutationObserver(function(mutations) {
+            var needRefresh = false;
+
+            for(var i = 0; i < mutations.length; i++) {
+                var target = mutations[i].target;
+
+                if(!target || target.nodeType != 1)
+                    continue;
+
+                // Реагируем только на изменения внутри блоков комментариев;
+                // наши собственные вставки (панели, превью, блоки «Ответы:»)
+                // лежат вне .l-comments-wrap либо не содержат .b-comment
+                if(!target.closest || !target.closest('.l-comments-wrap'))
+                    continue;
+
+                var j, node;
+
+                for(j = 0; j < mutations[i].addedNodes.length; j++) {
+                    node = mutations[i].addedNodes[j];
+                    if(node.nodeType != 1)
+                        continue;
+                    if(
+                        node.classList.contains('b-comment') ||
+                        node.querySelector('.b-comment')
+                    ) {
+                        // В свежих постах сразу ищем :smile:
+                        replaceSmileysInNode(node);
+                        needRefresh = true;
                     }
                 }
-            });
+
+                for(j = 0; j < mutations[i].removedNodes.length; j++) {
+                    node = mutations[i].removedNodes[j];
+                    if(node.nodeType != 1)
+                        continue;
+                    if(
+                        node.classList.contains('b-comment') ||
+                        node.querySelector('.b-comment')
+                    ) {
+                        needRefresh = true;
+                    }
+                }
+            }
+
+            if(!needRefresh)
+                return;
+
+            if(commentsRefreshTimer)
+                clearTimeout(commentsRefreshTimer);
+
+            commentsRefreshTimer = setTimeout(function() {
+                commentsRefreshTimer = null;
+                refreshCommentsFeatures();
+            }, 100);
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
     }
 
 
@@ -520,7 +653,9 @@
 
         var hideButtons = document.getElementsByClassName('js-remove-button');
         for(var i=0; i < hideButtons.length; i++) {
-            hideButtons[i].getElementsByTagName('img')[0].setAttribute("src", icons['hide']);
+            var hideButtonImg = hideButtons[i].getElementsByTagName('img')[0];
+            if (hideButtonImg)
+                hideButtonImg.setAttribute("src", icons['hide']);
             hideButtons[i].onclick = function() {
                 hidePost(this.parentNode.parentNode);
                 return false;
@@ -530,6 +665,10 @@
 
         var comments = document.getElementsByClassName('b-comment');
         for(var i=0; i < comments.length; i++){
+            // только настоящие комментарии (id="comment_..."), не превью-клоны
+            // и не служебные окна с классом b-comment
+            if(!/^comment_/.test(comments[i].id))
+                continue;
             for(var j=0; j < hidePatterns.length; j++)
                 if(hiddenComments.indexOf(comments[i].id)!= -1 || hidePatterns[j].test(comments[i].textContent)) {
                     hidePost(comments[i]);
@@ -601,16 +740,26 @@
     }
 
     function hidePost(node, parentNode) {
+        if (!node)
+            return false;
         if(enabledFeatures.indexOf("show-hidden")!= -1) {
-            node.getElementsByClassName('b-comment_b-body')[0].style.display = "none";
-            var button = node.getElementsByClassName('b-comment_b-info')[0].getElementsByClassName('js-remove-button')[0];
-            button.onclick = function() {
-                showPost(node);
-                return false;
+            var body = node.getElementsByClassName('b-comment_b-body')[0];
+            if (body)
+                body.style.display = "none";
+            var info = node.getElementsByClassName('b-comment_b-info')[0];
+            var button = info ? info.getElementsByClassName('js-remove-button')[0] : null;
+            if (button) {
+                button.onclick = function() {
+                    showPost(node);
+                    return false;
+                }
+                var buttonImg = button.getElementsByTagName('img')[0];
+                if (buttonImg)
+                    buttonImg.setAttribute("src", icons['show']);
             }
-            button.getElementsByTagName('img')[0].setAttribute("src", icons['show']);
         } else {
-            node.parentNode.removeChild(node);
+            if (node.parentNode)
+                node.parentNode.removeChild(node);
         }
         if (enabledFeatures.indexOf("recursive-hidding") != -1) {
             var idPrefix = locationPrefix == 'news' ? 'comment_' : 'comment_' + locationPrefix + '_';
@@ -634,13 +783,22 @@
     }
 
     function showPost(node) {
-        node.getElementsByClassName('b-comment_b-body')[0].style.display = "block";
-        var button = node.getElementsByClassName('b-comment_b-info')[0].getElementsByClassName('js-remove-button')[0];
-        button.onclick = function() {
-            hidePost(node);
+        if (!node)
             return false;
+        var body = node.getElementsByClassName('b-comment_b-body')[0];
+        if (body)
+            body.style.display = "block";
+        var info = node.getElementsByClassName('b-comment_b-info')[0];
+        var button = info ? info.getElementsByClassName('js-remove-button')[0] : null;
+        if (button) {
+            button.onclick = function() {
+                hidePost(node);
+                return false;
+            }
+            var buttonImg = button.getElementsByTagName('img')[0];
+            if (buttonImg)
+                buttonImg.setAttribute("src", icons['hide']);
         }
-        button.getElementsByTagName('img')[0].setAttribute("src", icons['hide']);
         localStorage.removeItem(node.id);
         var tempHidden = JSON.parse(localStorage.getItem('temp_' + node.id));
         if (tempHidden) {
@@ -903,45 +1061,53 @@
         });
     }
 
-    function addTextToForm(text) {
-        cursor_pos = formTextarea.selectionStart;
-        var formText = formTextarea.value;
-        formTextarea.value = formText.slice(0, cursor_pos)
+    function addTextToForm(text, textarea) {
+        var ta = textarea || formTextarea;
+        if (!ta)
+            return;
+        var cursor_pos = ta.selectionStart;
+        var formText = ta.value;
+        ta.value = formText.slice(0, cursor_pos)
                             + text
-                            + formText.slice(formTextarea.selectionEnd);
-        formTextarea.focus();
+                            + formText.slice(ta.selectionEnd);
+        focusNoScroll(ta);
     };
 
     function wrapImageLink(link) {
         if (!link)
-            return;
+            return "";
         if (/imgur/.test(link)) {
-            var d = /imgur.com\/([^\]\[]+)/.exec(link);
-			var c = d[1].replace('.jpg', '');
+            var e = /imgur.com\/([^\]\[]+)/.exec(link);
+			var d = e[1].replace('.jpg', '');
+			var c = d.replace('.webm', '');
 			var b = c.replace('.png', '');
 			var a = b.replace('.gif', '');
             if (a) {
-                return '[:' + a + ':]';
+                return '[i:' + a + ':]';
             }
         } else {
             return '[' + link + ']';
         }
     }
 
-    function createSmile(text, imgLink) {
+    function createSmile(text, imgLink, textarea) {
 
         var image = document.createElement("img");
         var link = document.createElement("a");
 
         link.href = "#";
         link.onclick = function(e) {
+            // preventDefault ДО любой логики: если что-то упадёт,
+            // браузер не уйдёт по href="#" и не подбросит страницу вверх
+            if (e && e.preventDefault)
+                e.preventDefault();
             if (deletingSmiles) {
-                destroyCustomSmile(this.id);
+                var key = this.getAttribute('data-ket-key');
+                if (key)
+                    destroyCustomSmile(key);
             } else {
-                addTextToForm(text);
-                formTextarea.focus();
+                addTextToForm(text, textarea);
             }
-            e.preventDefault();
             return false;
         };
         link.title = text;
@@ -965,43 +1131,65 @@
             alert("Уже есть картинка с таким именем");
             return false;
         }
-        addCustomImage(link, name);
         localStorage.setItem(id, link);
+        addCustomImage(link, name);
     }
 
-    function addCustomImage(link, name) {
+    function addCustomImage(link, name, panel) {
 
         var id = "image-" + name;
-        var newImage = createButton(name, function(e) {
-            if (deletingSmiles)
-                destroyCustomImage(this.id);
-            else {addTextToForm('"'+wrapImageLink(link)+'":'+link);
-                formTextarea.focus();
+        var panels = panel
+            ? [panel]
+            : document.querySelectorAll('.ket-smile-panel');
+
+        for(var p = 0; p < panels.length; p++) {
+            var newImage = createButton(name, (function(ta) {
+                return function(e) {
+                    if (e && e.preventDefault)
+                        e.preventDefault();
+                    if (deletingSmiles) {
+                        var key = this.getAttribute('data-ket-key');
+                        if (key)
+                            destroyCustomImage(key);
+                    } else {
+                        addTextToForm('"'+wrapImageLink(link)+'":'+link, ta);
+                    }
+                    return false;
+                };
+            })(panels[p]._ketTextarea));
+
+            newImage.setAttribute('data-ket-key', id);
+            newImage.onmousedown = function(e) {
+                if (e.which === 2) {
+                    destroyCustomImage(this.getAttribute('data-ket-key'));
+                }
+                return false;
+            };
+
+            newImage.setAttribute("class", "add-image-button");
+
+            var imageContainer = panels[p].querySelector('.ket-image-container');
+            if (imageContainer) {
+                imageContainer.appendChild(newImage);
+                imageContainer.style.display = "block";
             }
-            e.preventDefault();
-            return false;
-        });
-
-        newImage.onmousedown = function(e) {
-            if (e.which === 2) {
-                destroyCustomImage(this.id);
-            }
-            return false;
-        };
-
-        newImage.id = id;
-        newImage.setAttribute("class", "add-image-button");
-
-        var imageContainer = document.getElementById("image-container");
-        imageContainer.appendChild(newImage);
-        imageContainer.style.display = "block";
+        }
     }
 
     function destroyCustomImage(id) {
+        if (!id)
+            return;
         localStorage.removeItem(id);
-        document.getElementById("image-container").removeChild(document.getElementById(id));
-        if (document.getElementsByClassName("add-image-button").length === 0)
-            document.getElementById("image-container").style.display = "none";
+
+        var buttons = document.querySelectorAll('.add-image-button');
+        for(var i = buttons.length - 1; i >= 0; i--) {
+            if (buttons[i].getAttribute('data-ket-key') == id) {
+                var container = buttons[i].parentNode;
+                container.removeChild(buttons[i]);
+                if (container.getElementsByClassName('add-image-button').length === 0)
+                    container.style.display = "none";
+            }
+        }
     }
 
     // Custom Smiles
@@ -1014,51 +1202,88 @@
             alert("Такой смайлик уже добавлен");
             return false;
         }
-        addCustomSmile(link)
         localStorage.setItem(id, link);
+        addCustomSmile(link);
     }
 
-    function addCustomSmile(link) {
+    function addCustomSmile(link, panel) {
 
         var id  = "smile-"+link;
         var wrappedLink = wrapImageLink(link);
         if (!wrappedLink)
             return;
-        var newSmile = createSmile('"' + wrappedLink + '":' + link, link);
 
-        newSmile.onmousedown = function(e) {
-            if (e.which === 2) {
-                destroyCustomSmile(this.id);
-            }
-            return false;
-        };
-        newSmile.title = "Средняя кнопка мыши для удаления";
-        newSmile.id = id;
-        newSmile.setAttribute("class", "add-smile-link");
-        document.getElementById("smile-panel").insertBefore(newSmile,
-                                                        document.getElementById("image-container"));
+        var panels = panel
+            ? [panel]
+            : document.querySelectorAll('.ket-smile-panel');
+
+        for(var p = 0; p < panels.length; p++) {
+            var newSmile = createSmile('"' + wrappedLink + '":' + link, link, panels[p]._ketTextarea);
+
+            newSmile.setAttribute('data-ket-key', id);
+            newSmile.onmousedown = function(e) {
+                if (e.which === 2) {
+                    destroyCustomSmile(this.getAttribute('data-ket-key'));
+                }
+                return false;
+            };
+            newSmile.title = "Средняя кнопка мыши для удаления";
+            newSmile.setAttribute("class", "add-smile-link");
+
+            var imageContainer = panels[p].querySelector('.ket-image-container');
+            panels[p].insertBefore(newSmile, imageContainer);
+        }
     }
 
     function destroyCustomSmile(id) {
+        if (!id)
+            return;
         localStorage.removeItem(id);
-        document.getElementById("smile-panel").removeChild(document.getElementById(id));
+
+        var links = document.querySelectorAll('.add-smile-link');
+        for(var i = links.length - 1; i >= 0; i--) {
+            if (links[i].getAttribute('data-ket-key') == id)
+                links[i].parentNode.removeChild(links[i]);
+        }
     }
 
-    function addSmileClick(e) {
+    function addSmileClick(e, textarea) {
 
-        var link = prompt("Ссылка на картинку или имя файла на ргхосте:");
-        var image = new Image();
+        if (e && e.preventDefault)
+            e.preventDefault();
+
+        var ta = textarea || formTextarea;
+        var link = ta ? getSelectionText(ta) : '';
+
+        if (link.length > 0) {} else {
+            link = prompt('Полная ссылка на изображение на имгуре:');
+        }
 
         if (!link)
             return false;
 
-        if (/([\d\w]{9})/.test(link))
-            var num = /([\d\w]{9})/.exec(link)[1];
+        var image = new Image();
+        var num = "";
 
+        if (/imgur/.test(link)) {
+            var e = /imgur.com\/([^\]\[]+)/.exec(link);
+			var d = e[1].replace('.jpg', '');
+			var c = d.replace('.webm', '');
+			var b = c.replace('.png', '');
+			var a = b.replace('.gif', '');
+            if (a) {
+                num = a;
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+
+        link = "https://i.imgur.com/" + num + ".jpg";
         image.src = link;
         image.onerror = function() {
             if(num) {
-                link = "http://rghost.ru/" + num + "/image.png";
                 image.src = link;
             }
             image.onerror = function() {
@@ -1072,70 +1297,133 @@
                 createCustomSmile(link);
             }
         }
-        e.preventDefault();
         return false;
     }
 
     function removeSmilesClick(e) {
-        const redCross = icons['redCross'];
-        const whiteCross = icons['whiteCross'];
+        if (e && e.preventDefault)
+            e.preventDefault();
 
-        if (!deletingSmiles) {
-            document.getElementById("remove-smiles-icon").src = whiteCross;
-            deletingSmiles = true;
-        } else {
-            document.getElementById("remove-smiles-icon").src = redCross;
-            deletingSmiles = false;
-        }
-        e.preventDefault();
+        deletingSmiles = !deletingSmiles;
+
+        var modeIcons = document.querySelectorAll('.ket-remove-smiles-icon');
+        for(var i = 0; i < modeIcons.length; i++)
+            modeIcons[i].src = deletingSmiles ? icons['whiteCross'] : icons['redCross'];
+
         return false;
     }
 
+   /*
+    *      Режим панели: все смайлики / только какаческие.
+    *      Влияет ТОЛЬКО на панель: замена :smile: в текстах
+    *      постов работает по полному списку в любом режиме.
+    */
 
-    function createSmilePanel() {
+    function smilesModeTitle() {
+        return smilesMode == 'smilesKakachOnly'
+            ? 'Смайлики только из Какача'
+            : 'Все смайлики';
+    }
+
+    function toggleSmilesMode(e) {
+        if (e && e.preventDefault)
+            e.preventDefault();
+
+        smilesMode = (smilesMode == 'smilesKakachOnly') ? 'smilesAll' : 'smilesKakachOnly';
+        localStorage.setItem('smiles-mode', smilesMode);
+
+        var stocks = document.querySelectorAll('.ket-stock-smiles');
+        for(var i = 0; i < stocks.length; i++) {
+            var panel = stocks[i].parentNode;
+            while(stocks[i].firstChild)
+                stocks[i].removeChild(stocks[i].firstChild);
+            stocks[i].appendChild(
+                createStockSmiles(panel ? panel._ketTextarea : null)
+            );
+        }
+
+        var modeIcons = document.querySelectorAll('.ket-smiles-mode-icon');
+        for(var i = 0; i < modeIcons.length; i++) {
+            modeIcons[i].src = icons[smilesMode];
+            if (modeIcons[i].parentNode)
+                modeIcons[i].parentNode.title = smilesModeTitle();
+        }
+
+        return false;
+    }
+
+    function createStockSmiles(textarea) {
+        var fragment = document.createDocumentFragment();
+
+        for(var i in gifSmileList)
+            fragment.appendChild(createSmile(':'+gifSmileList[i]+':', "https://1chan.ca/img/" + gifSmileList[i] + ".gif", textarea));
+        for(var i in pngSmileList)
+            fragment.appendChild(createSmile(':'+pngSmileList[i]+':', "https://1chan.ca/img/" + pngSmileList[i] + ".png", textarea));
+
+        if (smilesMode != 'smilesKakachOnly') {
+            for(var i in gifSmileListSVIN)
+                fragment.appendChild(createSmile(':'+gifSmileListSVIN[i]+':', "https://web.archive.org/web/20260819210418im_/https://1chan.win/img/smilies/" + gifSmileListSVIN[i] + ".gif", textarea));
+            for(var i in pngSmileListSVIN)
+                fragment.appendChild(createSmile(':'+pngSmileListSVIN[i]+':', "https://web.archive.org/web/20260819210418im_/https://1chan.win/img/smilies/" + pngSmileListSVIN[i] + ".png", textarea));
+            fragment.appendChild(createSmile(':oru2:', "https://web.archive.org/web/20260819210418im_/https://1chan.win/img/smilies/oru.png", textarea));
+        }
+
+        return fragment;
+    }
+
+
+    function createSmilePanel(textarea) {
+
+        textarea = textarea || formTextarea;
+        if (!textarea)
+            return;
 
         var container = document.createElement("div");
         var imageContainer = document.createElement("div");
 
-        for(var i in gifSmileList) {
-            var newSmile = createSmile(':'+gifSmileList[i]+':', "https://1chan.ca/img/" + gifSmileList[i] + ".gif");
-            container.appendChild(newSmile);
-        }
-        for(var i in pngSmileList) {
-            var newSmile = createSmile(':'+pngSmileList[i]+':', "https://1chan.ca/img/" + pngSmileList[i] + ".png");
-            container.appendChild(newSmile);
-        }
-        for(var i in gifSmileListSVIN) {
-            var newSmile = createSmile(':'+gifSmileListSVIN[i]+':', "https://web.archive.org/web/20260819210418im_/https://1chan.win/img/smilies/" + gifSmileListSVIN[i] + ".gif");
-            container.appendChild(newSmile);
-        }
-        for(var i in pngSmileListSVIN) {
-            var newSmile = createSmile(':'+pngSmileListSVIN[i]+':', "https://web.archive.org/web/20260819210418im_/https://1chan.win/img/smilies/" + pngSmileListSVIN[i] + ".png");
-            container.appendChild(newSmile);
-        }
-        container.appendChild(createSmile(':oru2:', "https://web.archive.org/web/20260819210418im_/https://1chan.win/img/smilies/oru.png"));
+        container.className = 'ket-smile-panel';
+        container._ketTextarea = textarea;
+
+        var stockContainer = document.createElement("span");
+        stockContainer.className = 'ket-stock-smiles';
+        stockContainer.appendChild(createStockSmiles(textarea));
+        container.appendChild(stockContainer);
 
         var addSmileLink  = document.createElement("a");
         var addSmileImg = document.createElement("img");
         addSmileImg.src = icons['addSmile'];
         addSmileLink.href = "#";
-        addSmileLink.onclick = addSmileClick;
+        addSmileLink.onclick = function(e) {
+            addSmileClick(e, textarea);
+            return false;
+        };
         addSmileLink.appendChild(addSmileImg);
         addSmileLink.title = "Добавить смайлик или картинку";
 
         var removeSmilesLink  = document.createElement("a");
         var removeSmilesImg = document.createElement("img");
-        removeSmilesImg.src = icons['redCross'];
-        removeSmilesImg.id = "remove-smiles-icon";
+        removeSmilesImg.src = deletingSmiles ? icons['whiteCross'] : icons['redCross'];
+        removeSmilesImg.className = "ket-remove-smiles-icon";
         removeSmilesLink.href = "#";
         removeSmilesLink.onclick = removeSmilesClick;
         removeSmilesLink.appendChild(removeSmilesImg);
         removeSmilesLink.title = "Удалить смайлики или картинки";
 
+        var smilesModeLink  = document.createElement("a");
+        var smilesModeImg = document.createElement("img");
+        smilesModeImg.src = icons[smilesMode];
+        smilesModeImg.className = "ket-smiles-mode-icon";
+        smilesModeLink.href = "#";
+        smilesModeLink.onclick = toggleSmilesMode;
+        smilesModeLink.appendChild(smilesModeImg);
+        smilesModeLink.title = smilesModeTitle();
+
         var controlsContainer = document.createElement("span");
         controlsContainer.style.cssFloat = "right";
         controlsContainer.style.margin = "5px";
 
+        controlsContainer.appendChild(smilesModeLink);
+        controlsContainer.appendChild(document.createElement("br"));
         controlsContainer.appendChild(addSmileLink);
         controlsContainer.appendChild(document.createElement("br"));
         controlsContainer.appendChild(removeSmilesLink);
@@ -1147,7 +1435,6 @@
             container.style.width = '534px'
             container.style.border = "1px solid #999999";
             container.style.margin = "0 0 10px 0";
-            container.id = "smile-panel";
             document.getElementsByName('text_full')[0].parentNode.insertBefore(container,
                                                         document.getElementsByName('text_full')[0]);
         }
@@ -1156,53 +1443,45 @@
             container.style.paddingLeft = "8px";
             container.style.border = "1px solid #CCCCCC";
             container.style.borderRadius = "5px";
-            container.id = "smile-panel";
-            var formBody = formTextarea.parentNode.parentNode;
+            var formBody = textarea.parentNode.parentNode;
             formBody.parentNode.insertBefore(container, formBody);
         }
 
-        if(/\.ca\/news/.test(document.URL)) {
-            var images = [];
-            for(var i = 0; i < localStorage.length; i++) {
-                var key = localStorage.key(i);
-                if ((/^smile-/).test(key)) {
-                    var link = localStorage.getItem(key);
-                    addCustomSmile(link);
-                } else if ((/^image-.+$/).test(key))
-                    images.push(key);
-            }
+        imageContainer.className = "ket-image-container";
+        imageContainer.style.margin = "5px 6px 7px 0px";
+        imageContainer.style.paddingTop = "2px";
+        imageContainer.style.borderTop = "1px dashed #CCCCCC";
+        imageContainer.style.display = "none";
 
-            imageContainer.id = "image-container";
-            imageContainer.style.margin = "5px 6px 7px 0px";
-            imageContainer.style.paddingTop = "2px";
-            imageContainer.style.borderTop = "1px dashed #CCCCCC";
+        container.appendChild(imageContainer);
 
-            container.appendChild(imageContainer);
+        var images = [];
+        for(var i = 0; i < localStorage.length; i++) {
+            var key = localStorage.key(i);
+            if ((/^smile-/).test(key)) {
+                addCustomSmile(localStorage.getItem(key), container);
+            } else if ((/^image-.+$/).test(key))
+                images.push(key);
+        }
 
-            for(var i in images) {
-                var name = /^image-(.+)$/.exec(images[i])[1];
-                addCustomImage(localStorage.getItem(images[i]), name);
-            }
-
-            if (images.length === 0) {
-                imageContainer.style.display = "none";
-            }
+        for(var i in images) {
+            var name = /^image-(.+)$/.exec(images[i])[1];
+            addCustomImage(localStorage.getItem(images[i]), name, container);
         }
 
         if(enabledFeatures.indexOf("panel-hiding")!= -1)
-            initSmilePanelHiding()
+            initSmilePanelHiding(container)
     }
 
-    function initSmilePanelHiding() {
+    function initSmilePanelHiding(smilePanel) {
 
-        var smilePanel = document.getElementById("smile-panel");
         var showButton = document.createElement("a");
         var showContainer = document.createElement("div");
         var hideButton = document.createElement("a");
         var hideContainer = document.createElement("div");
 
         showButton.onclick = function() {
-            showSmilePanel();
+            showSmilePanels();
             return false;
         };
         showButton.textContent = "Cмайлики и картинки";
@@ -1212,10 +1491,10 @@
         showContainer.appendChild(showButton);
         showContainer.style.display = "none";
         showContainer.style.fontSize = "0.65em";
-        showContainer.id = "show-panel-button";
+        showContainer.className = "ket-show-panel-button";
 
         hideButton.onclick = function() {
-            hideSmilePanel();
+            hideSmilePanels();
             return false;
         };
         hideButton.textContent = "Спрятать панель";
@@ -1224,7 +1503,7 @@
         hideButton.href = "#";
         hideContainer.appendChild(hideButton);
         hideContainer.style.fontSize = "0.65em";
-        hideContainer.id = "hide-panel-button";
+        hideContainer.className = "ket-hide-panel-button";
 
         if(/\.ca\/news\/add/.test(document.URL)) {
             hideContainer.style.margin = "3px 0px 4px 220px";
@@ -1238,21 +1517,31 @@
         smilePanel.parentNode.insertBefore(showContainer, smilePanel);
 
         if(localStorage.getItem("smile_panel") == "hidden")
-            hideSmilePanel();
+            hideSmilePanels();
     }
 
-    function hideSmilePanel() {
+    function setSmilePanelsVisible(visible) {
+        var panels = document.querySelectorAll('.ket-smile-panel');
+        for(var i = 0; i < panels.length; i++)
+            panels[i].style.display = visible ? "block" : "none";
+
+        var showButtons = document.querySelectorAll('.ket-show-panel-button');
+        for(var i = 0; i < showButtons.length; i++)
+            showButtons[i].style.display = visible ? "none" : "block";
+
+        var hideButtons = document.querySelectorAll('.ket-hide-panel-button');
+        for(var i = 0; i < hideButtons.length; i++)
+            hideButtons[i].style.display = visible ? "block" : "none";
+    }
+
+    function hideSmilePanels() {
         localStorage.setItem("smile_panel", "hidden");
-        document.getElementById("smile-panel").style.display = "none";
-        document.getElementById("show-panel-button").style.display = "block";
-        document.getElementById("hide-panel-button").style.display = "none";
+        setSmilePanelsVisible(false);
     }
 
-    function showSmilePanel() {
+    function showSmilePanels() {
         localStorage.setItem("smile_panel", "visible");
-        document.getElementById("smile-panel").style.display = "block";
-        document.getElementById("show-panel-button").style.display = "none";
-        document.getElementById("hide-panel-button").style.display = "block";
+        setSmilePanelsVisible(true);
     }
 
 
@@ -1278,47 +1567,55 @@
         return button;
     }
 
-    function imgClick() {
-
-        var link = getSelectionText(formTextarea);
+    function imgClick(textarea) {
+        var ta = textarea || formTextarea;
+        if (!ta)
+            return;
+        var link = getSelectionText(ta);
 
         if (link.length > 0) {
-            addTextToForm(wrapImageLink(link));
+            addTextToForm(wrapImageLink(link), ta);
         } else {
-            addTextToForm(wrapImageLink(prompt('Ссылка на изображение:')));
+            addTextToForm(wrapImageLink(prompt('Полная ссылка на изображение на имгуре:')), ta);
         }
     }
 
-    function quoteClick() {
+    function quoteClick(textarea) {
 
-        var text  = getSelectionText(formTextarea);
-        var start = formTextarea.selectionStart;
+        var ta = textarea || formTextarea;
+        if (!ta)
+            return;
+        var text  = getSelectionText(ta);
+        var start = ta.selectionStart;
 
         if (text.length > 0) {
-            var formText = formTextarea.value;
+            var formText = ta.value;
             var lines = text.split("\n");
             for(var i in lines) {
                 lines[i] = ">>" + lines[i].trim() + "<<";
             }
-            addTextToForm(lines.join("\n"));
+            addTextToForm(lines.join("\n"), ta);
             if(lines.length == 1)
-                formTextarea.setSelectionRange(start + 2, start + text.length + 2);
+                ta.setSelectionRange(start + 2, start + text.length + 2);
         } else {
             text = document.getSelection().toString();
             var lines = text.split("\n");
             for(var i in lines) {
               lines[i] = ">" + lines[i].trim();
             }
-            addTextToForm(lines.join("\n"));
+            addTextToForm(lines.join("\n"), ta);
         }
     }
 
-    function bigBoldClick() {
+    function bigBoldClick(textarea) {
 
-        var text = getSelectionText(formTextarea);
+        var ta = textarea || formTextarea;
+        if (!ta)
+            return;
+        var text = getSelectionText(ta);
         var lines = text.split("\n");
-        var cursor = formTextarea.selectionEnd;
-        var start = formTextarea.selectionStart;
+        var cursor = ta.selectionEnd;
+        var start = ta.selectionStart;
         const stars = "\n********************************************";
 
         if (text.length > 0) {
@@ -1326,56 +1623,44 @@
                 if (lines[i] !== "")
                     lines[i] += stars;
             }
-            addTextToForm(lines.join("\n"));
+            addTextToForm(lines.join("\n"), ta);
         } else {
-            formTextarea.value += stars;
+            ta.value += stars;
         }
 
-        formTextarea.focus();
+        focusNoScroll(ta);
         if(lines.length == 1 && text.length > 0)
-            formTextarea.setSelectionRange(start, start + text.length);
+            ta.setSelectionRange(start, start + text.length);
         else
-            formTextarea.setSelectionRange(cursor, cursor);
+            ta.setSelectionRange(cursor, cursor);
     }
 
-    function bigImgClick() {
-
-        var link = getSelectionText(formTextarea);
-
-        if (link.length === 0)
-            link = prompt('Полная ссылка на изображение на имгуре:');
-        if (!link) {
-            formTextarea.focus();
-            return false;
-        }if (/imgur/.test(link)) {
-            var e = /imgur.com\/([^\]\[]+)/.exec(link);
-			var d = e[1].replace('.jpg', '');
-			var c = d.replace('.webm', '');
-			var b = c.replace('.png', '');
-			var a = b.replace('.gif', '');
-            var num = a;
-            link = "http://imgur.com/" + num + "/";
-        }
-
-        addTextToForm('"[:' + num + ':]":' + link + '');
+    function strikeThroughClick(textarea) {
+        var ta = textarea || formTextarea;
+        if (!ta)
+            return;
+        var text = getSelectionText(ta);
+        addTextToForm('<s>' + text + '</s>', ta);
     }
 
-    function strikeThroughClick() {
-        var text = getSelectionText(formTextarea);
-        addTextToForm('<s>' + text + '</s>');
-    }
-
-    function yobaClick() {
-        var selected_text = getSelectionText(formTextarea);
+    function yobaClick(textarea) {
+        var ta = textarea || formTextarea;
+        if (!ta)
+            return;
+        var selected_text = getSelectionText(ta);
         var has_selected = selected_text.length != 0;
 
         if(has_selected)
-           addTextToForm(yobaTranslate(selected_text));
+           addTextToForm(yobaTranslate(selected_text), ta);
         else
-           formTextarea.value = yobaTranslate(formTextarea.value)
+           ta.value = yobaTranslate(ta.value)
     }
 
-    function createMarkupPanel() {
+    function createMarkupPanel(textarea) {
+
+        textarea = textarea || formTextarea;
+        if (!textarea)
+            return;
 
         var container = document.createElement("div");
         var markup = {
@@ -1394,20 +1679,22 @@
         };
 
         for (var k in buttons)
-            container.appendChild(createButton(k, buttons[k]));
+            container.appendChild(createButton(k, (function(fn, ta) {
+                return function() { fn(ta); };
+            })(buttons[k], textarea)));
 
         for(var k in markup) {
             var newButton = createButton(k, function() {
-                var text = getSelectionText(formTextarea);
-                var start = formTextarea.selectionStart;
-                var selection = formTextarea.selectionStart != formTextarea.selectionEnd;
+                var text = getSelectionText(textarea);
+                var start = textarea.selectionStart;
+                var selection = textarea.selectionStart != textarea.selectionEnd;
                 var m = markup[this.value][0];
                 text = wrapText(text, m);
-                addTextToForm(text);
+                addTextToForm(text, textarea);
                 if(selection)
-                    formTextarea.setSelectionRange(start, start + text.length);
+                    textarea.setSelectionRange(start, start + text.length);
                 else
-                    formTextarea.setSelectionRange(start + m.length, start + m.length);
+                    textarea.setSelectionRange(start + m.length, start + m.length);
                 });
             container.appendChild(newButton);
         }
@@ -1416,19 +1703,25 @@
             container.style.paddingTop = "4px";
             document.getElementsByName('text_full')[0].parentNode.insertBefore(container,
                                                         document.getElementsByName('text_full')[0])
-            document.addEventListener('click', function(event){
-                if(/text/.test(event.target.name))
-                    formTextarea = event.target // Смена полей в news/add
-                })
+            if (!createMarkupPanel.fieldSwitcherAdded) {
+                createMarkupPanel.fieldSwitcherAdded = true;
+                document.addEventListener('click', function(event){
+                    if(/text/.test(event.target.name))
+                        formTextarea = event.target // Смена полей в news/add
+                    })
+            }
         } else {
-            if(enabledFeatures.indexOf("markup-top") == -1) {
+            // .b-comment-form_b-uplink есть не везде (в форме быстрого
+            // ответа его нет) — ищем рядом с нашей формой, иначе
+            // просто ставим панель над полем ввода
+            var uplink = textarea.parentNode.getElementsByClassName("b-comment-form_b-uplink")[0];
+            if(enabledFeatures.indexOf("markup-top") == -1 && uplink) {
                 container.style.display = "inline-block";
-                formTextarea.parentNode.insertBefore(container,
-                                document.getElementsByClassName("b-comment-form_b-uplink")[0]);
+                textarea.parentNode.insertBefore(container, uplink);
             } else {
                 container.style.marginTop = "3px";
-                formTextarea.style.margin = "3px 0px 6px"
-                formTextarea.parentNode.insertBefore(container, formTextarea);
+                textarea.style.margin = "3px 0px 6px"
+                textarea.parentNode.insertBefore(container, textarea);
             }
         }
     }
@@ -1549,15 +1842,16 @@
     }
 
 
-    function createFormSettingsMenu() {
-        if (!formTextarea)
+    function createFormSettingsMenu(textarea) {
+        textarea = textarea || formTextarea;
+        if (!textarea)
             return;
 
-        if (!formTextarea.parentNode || !formTextarea.parentNode.parentNode)
+        if (!textarea.parentNode || !textarea.parentNode.parentNode)
             return;
 
         var container =
-            formTextarea.parentNode.parentNode.getElementsByTagName("div")[0];
+            textarea.parentNode.parentNode.getElementsByTagName("div")[0];
 
         if (!container)
             return;
@@ -1566,7 +1860,6 @@
 
         general.href = "#";
         general.className = "general-settings-button";
-        general.id = "general-settings-button-form";
 
         var generalIcon = document.createElement("img");
         generalIcon.src = icons['settings'];
@@ -1577,7 +1870,6 @@
 
         hidelist.href = "#";
         hidelist.className = "hiding-list-button";
-        hidelist.id = "hiding-list-button-form";
 
         var regexpIcon = document.createElement("img");
         regexpIcon.src = icons['regexp'];
@@ -1664,25 +1956,6 @@
         return false;
     }
 
-    function hideHideList() {
-        var regexp =
-            document.getElementById('regexps');
-
-        if (regexp) {
-            var menu = regexp.parentNode;
-
-            if (menu)
-                menu.parentNode.removeChild(menu);
-        }
-
-        setMenuButtonAction(
-            'hiding-list-button',
-            displayHideList
-        );
-
-        return false;
-    }
-
     function displayGeneralOptions() {
         var layout = document.createElement("div");
         var container = document.createElement("div");
@@ -1708,12 +1981,12 @@
 
         container.setAttribute(
             "style",
-            'padding:5px; height:fit-content; position: relative !important'
+            'height:fit-content; width:fit-content; position: relative !important;box-sizing: border-box;padding:5px;margin:0;font-size: 1em;'
         );
 
         container.setAttribute(
             "class",
-            "b-mod-toolbar"
+            "b-comment"
         );
 
         for(var i = 0; i < features.length; i++) {
@@ -1741,8 +2014,9 @@
         positionDesc.textContent =
             'Положение настроек';
 
-        positionDesc.style.display = 'inline';
+        positionDesc.style.display = 'inline-block';
         positionDesc.style.fontSize = '0.75em';
+        positionDesc.style.margin = "0 0 10px 5px";
 
         var positionSelect = document.createElement('select');
 
@@ -1847,45 +2121,205 @@
         location.reload();
     }
 
+    function hideHideList() {
+        var layout =
+            document.getElementById(
+                'hiding-list-layout'
+            );
+
+        if (layout)
+            layout.parentNode.removeChild(layout);
+
+        setMenuButtonAction(
+            'hiding-list-button',
+            displayHideList
+        );
+
+        return false;
+    }
+
+
     function displayHideList() {
+        var layout = document.createElement("div");
         var container = document.createElement("div");
+        var buttonsContainer = document.createElement("div");
 
         setMenuButtonAction(
             'hiding-list-button',
             hideHideList
         );
-        container.setAttribute("style", "top: 5px; left:5px; position:fixed; \
-        z-index: 10000; background: #EAF4FF; border: 1px black")
-        var list = document.createElement("textarea")
-        list.id = "regexps"
-        list.setAttribute("style", "width: 300px; height: 300px; margin:5px")
-        for(var key in localStorage)
+
+        layout.id = 'hiding-list-layout';
+
+        layout.style.position = 'fixed';
+        layout.style.top = '5px';
+        layout.style.left = '5px';
+        layout.style.zIndex = '10000';
+
+        layout.style.display = 'flex';
+        layout.style.alignItems = 'flex-end';
+        layout.style.gap = '5px';
+
+        container.id = 'hiding-list';
+
+        container.setAttribute(
+            "style",
+            'height:fit-content; width:fit-content; position: relative !important; box-sizing: border-box; padding:5px; margin:0; font-size:1em;'
+        );
+
+        container.setAttribute(
+            "class",
+            "b-comment"
+        );
+
+        var list = document.createElement("textarea");
+
+        list.id = "regexps";
+
+        list.setAttribute(
+            "style",
+            "width:300px; height:300px; margin:0"
+        );
+
+        for(var key in localStorage) {
             if(/hidephrase/.test(key))
-                list.value += localStorage[key] + '\n'
-        var button = document.createElement("button")
-        button.textContent = "Сохранить"
-        button.onclick = updateRegexps;
-        button.style.margin = "5px"
-        container.appendChild(list)
-        container.appendChild(document.createElement("br"))
-        container.appendChild(button)
-        document.getElementsByTagName("body")[0].appendChild(container)
+                list.value += localStorage[key] + '\n';
+        }
+
+        container.appendChild(list);
+
+        var saveButton =
+            document.createElement("button");
+
+        saveButton.textContent = "Сохранить";
+        saveButton.onclick = updateRegexps;
+        saveButton.style.marginTop = "5px";
+
+        container.appendChild(
+            document.createElement("br")
+        );
+
+        container.appendChild(saveButton);
+
+        buttonsContainer.style.display = 'flex';
+        buttonsContainer.style.alignItems = 'flex-end';
+
+        var closeButton =
+            document.createElement("button");
+
+        closeButton.id =
+            "hiding-list-close";
+
+        closeButton.textContent = "X";
+
+        closeButton.onclick =
+            hideHideList;
+
+        buttonsContainer.appendChild(closeButton);
+
+        layout.appendChild(container);
+        layout.appendChild(buttonsContainer);
+
+        document.body.appendChild(layout);
+
         return false;
     }
 
+
     function updateRegexps() {
-        document.getElementById('hiding-list-button').onclick = displayHideList;
-        for(var key in localStorage)
+        for(var key in localStorage) {
             if(/hidephrase/.test(key))
                 localStorage.removeItem(key);
-        regexps = document.getElementById('regexps').value.split('\n');
+        }
+
+        var regexps =
+            document.getElementById('regexps').value.split('\n');
+
         for(var i = 0; i < regexps.length; i++) {
             if(regexps[i] != "") {
-                localStorage.setItem("hidephrase" + i, regexps[i]);
+                localStorage.setItem(
+                    "hidephrase" + i,
+                    regexps[i]
+                );
             }
         }
-        menu = document.getElementById('regexps').parentNode;
-        menu.parentNode.removeChild(menu);
+
+        location.reload();
+    }
+
+
+   /*
+    *      Быстрый ответ: движок создаёт #comment_form динамически
+    *      из template_form_comment — навешиваем на неё панели
+    *      расширения, как на обычную форму
+    */
+
+    function attachToCommentForm() {
+        var form = document.getElementById('comment_form');
+
+        if (!form || form.getAttribute('data-ket-attached'))
+            return;
+
+        var textarea = form.querySelector('#comment_form_text');
+
+        if (!textarea)
+            return;
+
+        form.setAttribute('data-ket-attached', '1');
+
+        // Свежая форма становится целью по умолчанию
+        formTextarea = textarea;
+
+        if (enabledFeatures.indexOf("markup") != -1)
+            createMarkupPanel(textarea);
+
+        if (enabledFeatures.indexOf("smiles") != -1)
+            createSmilePanel(textarea);
+
+        if (settingsPosition == 'form' || settingsPosition == 'both') {
+            createFormSettingsMenu(textarea);
+
+            setMenuButtonAction(
+                'general-settings-button',
+                displayGeneralOptions
+            );
+
+            setMenuButtonAction(
+                'hiding-list-button',
+                displayHideList
+            );
+        }
+    }
+
+    function registerQuickReplyWatcher() {
+        if (!window.MutationObserver)
+            return;
+
+        var observer = new MutationObserver(function(mutations) {
+            for(var i = 0; i < mutations.length; i++) {
+                var addedNodes = mutations[i].addedNodes;
+
+                for(var j = 0; j < addedNodes.length; j++) {
+                    var node = addedNodes[j];
+
+                    if (node.nodeType != 1)
+                        continue;
+
+                    if (
+                        node.id == 'comment_form' ||
+                        (node.querySelector && node.querySelector('#comment_form'))
+                    ) {
+                        attachToCommentForm();
+                        return;
+                    }
+                }
+            }
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
     }
 
 
@@ -1896,6 +2330,19 @@
     function createScrollButtons() {
         if (document.getElementById('ket-scroll-buttons'))
             return;
+
+        if(
+            /\.ca\/int\/?\d*/.test(document.URL) ||
+            /\.ca\/rail\/?\d*/.test(document.URL) ||
+            /\.ca\/oo\/?\d*/.test(document.URL) ||
+            /\.ca\/news\/?\d*/.test(document.URL) ||
+            /\.ca\/news\/all\/?\d*/.test(document.URL) ||
+            /\.ca\/news\/fav\/?\d*/.test(document.URL) ||
+            /\.ca\/news\/hidden\/?\d*/.test(document.URL) ||
+            /\.ca\/news\/res\/?\d*/.test(document.URL)
+        ) {} else {
+            return;
+        }
 
         var container = document.createElement('div');
 
@@ -1975,6 +2422,10 @@
     }
 
     function letTheSobakOut() {
+        var foundedKAKA4 = document.querySelectorAll('.b-top-panel');
+        if (foundedKAKA4.length === 0)
+            return;
+
         var savedSettings =
             localStorage.getItem('settings' + VERSION);
 
@@ -2008,6 +2459,9 @@
                 'settings-position' + VERSION
             ) || 'both';
 
+        smilesMode =
+            localStorage.getItem('smiles-mode') || 'smilesAll';
+
         formTextarea =
             document.getElementById("comment_form_text");
 
@@ -2038,13 +2492,13 @@
             if (
                 enabledFeatures.indexOf("markup") != -1
             ) {
-                createMarkupPanel();
+                createMarkupPanel(formTextarea);
             }
 
             if (
                 enabledFeatures.indexOf("smiles") != -1
             ) {
-                createSmilePanel();
+                createSmilePanel(formTextarea);
             }
         } else {
             if (
@@ -2074,6 +2528,8 @@
         }
 
         createMenu();
+
+        registerQuickReplyWatcher();
     }
 
     if(navigator.appName == "Opera")
