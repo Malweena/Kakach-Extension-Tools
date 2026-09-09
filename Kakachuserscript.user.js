@@ -2,15 +2,26 @@
 // @name        Kakach Extension Tools
 // @author      Original by postman, ayakudere, theanonym; forked by Ananim; modernized by malweena
 // @description Какаческрипт с блэкджеком и шлюхами (какач онли)
-// @version     2.0.1 (ca)
+// @version     2.0.2 (ca)
 // @icon        https://web.archive.org/web/20260616043953im_/https://1chan.ca/ico/favicons/1chan.ca.png
 // @downloadURL https://github.com/Malweena/Kakach-Extension-Tools/raw/master/Kakachuserscript.user.js
 // @match       https://1chan.ca/*
 // @match       https://*.1chan.ca/*
-// @grant       none
+// @grant       GM_xmlhttpRequest
+// @grant       GM.xmlHttpRequest
+// @connect     web.archive.org
+// @connect     i.imgur.com
+// @connect     imgur.com
+// @connect     1chan.ca
+// @connect     *.1chan.ca
 // ==/UserScript==
 
 (function(document) {
+
+    // Из-за @grant GM_xmlhttpRequest скрипт может работать в песочнице
+    // расширения, где страничная jQuery видна только через unsafeWindow
+    var $ = window.$ || window.jQuery ||
+        (typeof unsafeWindow !== 'undefined' && (unsafeWindow.$ || unsafeWindow.jQuery));
 
     // Globals
     var formTextarea;
@@ -134,6 +145,253 @@
             el.focus();
             window.scrollTo(x, y);
         }
+    }
+
+   /*
+    *      Кэш картинок скрипта: иконки и смайлы с web.archive.org
+    *      (и imgur, и самого 1chan.ca) грузятся мучительно долго,
+    *      поэтому каждая картинка один раз скачивается fetch'ем,
+    *      складывается блобом в IndexedDB и дальше показывается
+    *      через blob-URL вообще без обращений к сети
+    */
+
+    var ketImgMemCache = {};      // url -> blob-url
+    var ketImgPending = {};       // url -> [callback]
+    var ketImgDB = null;
+    var ketImgDBState = 'init';   // init | ready | failed
+    var ketImgDBWaiters = [];
+
+    function ketImgCacheInit() {
+        if (!window.indexedDB) {
+            ketImgDBState = 'failed';
+            return;
+        }
+
+        var finish = function(state, db) {
+            if (ketImgDBState != 'init')
+                return;
+            ketImgDBState = state;
+            ketImgDB = db;
+            var waiters = ketImgDBWaiters;
+            ketImgDBWaiters = [];
+            for(var i = 0; i < waiters.length; i++)
+                waiters[i]();
+        };
+
+        try {
+            var req = indexedDB.open('ket-imgcache', 1);
+
+            req.onupgradeneeded = function(e) {
+                var db = e.target.result;
+                if (!db.objectStoreNames.contains('images'))
+                    db.createObjectStore('images');
+            };
+            req.onsuccess = function(e) { finish('ready', e.target.result); };
+            req.onerror = function() { finish('failed', null); };
+            req.onblocked = function() { finish('failed', null); };
+
+            // страховка от зависшего открытия базы
+            setTimeout(function() { finish('failed', null); }, 3000);
+        } catch(e) {
+            finish('failed', null);
+        }
+    }
+
+    function ketImgWhenDBReady(cb) {
+        if (ketImgDBState == 'init')
+            ketImgDBWaiters.push(cb);
+        else
+            cb();
+    }
+
+    function ketImgDBGet(url, cb) {
+        ketImgWhenDBReady(function() {
+            if (ketImgDBState != 'ready') { cb(null); return; }
+            try {
+                var rq = ketImgDB.transaction('images', 'readonly')
+                    .objectStore('images')
+                    .get(url);
+                rq.onsuccess = function() { cb(rq.result || null); };
+                rq.onerror = function() { cb(null); };
+            } catch(e) { cb(null); }
+        });
+    }
+
+    function ketImgDBPut(url, blob) {
+        ketImgWhenDBReady(function() {
+            if (ketImgDBState != 'ready') return;
+            try {
+                ketImgDB.transaction('images', 'readwrite')
+                    .objectStore('images')
+                    .put(blob, url);
+            } catch(e) {}
+        });
+    }
+
+   /*
+    *      GM_xmlhttpRequest не подчиняется CORS — это единственный
+    *      способ забрать байты с web.archive.org (там нет заголовка
+    *      Access-Control-Allow-Origin, обычный fetch блокируется)
+    */
+
+    function ketImgGMXHR(url) {
+        return new Promise(function(resolve, reject) {
+            var xhrFn = null;
+
+            if (typeof GM !== 'undefined' && GM.xmlHttpRequest)
+                xhrFn = GM.xmlHttpRequest;
+            else if (typeof GM_xmlhttpRequest !== 'undefined')
+                xhrFn = GM_xmlhttpRequest;
+
+            if (!xhrFn) {
+                reject(new Error('GM_xmlhttpRequest недоступен'));
+                return;
+            }
+
+            xhrFn({
+                method: 'GET',
+                url: url,
+                responseType: 'blob',
+                onload: function(resp) {
+                    var blob = resp.response;
+                    if (
+                        resp.status >= 200 && resp.status < 300 &&
+                        blob && blob.size
+                    )
+                        resolve(blob);
+                    else
+                        reject(new Error('HTTP ' + resp.status));
+                },
+                onerror: function() { reject(new Error('network error')); },
+                ontimeout: function() { reject(new Error('timeout')); }
+            });
+        });
+    }
+
+   /*
+    *      Promise<Blob>: свой хост — обычный fetch (CORS не нужен),
+    *      чужие хосты — сразу GM_xhr; fetch для чужих — только когда
+    *      GM_xhr недоступен (напр. imgur отдаёт Access-Control-Allow-*)
+    */
+
+    function ketImgFetchBlob(url) {
+        var sameOrigin =
+            url.indexOf(location.protocol + '//' + location.host + '/') === 0 ||
+            url.charAt(0) == '/';
+
+        var haveGM =
+            (typeof GM !== 'undefined' && GM.xmlHttpRequest) ||
+            (typeof GM_xmlhttpRequest !== 'undefined');
+
+        if (sameOrigin || !haveGM) {
+            return fetch(url).then(function(resp) {
+                if (!resp.ok)
+                    throw new Error('HTTP ' + resp.status);
+                return resp.blob();
+            });
+        }
+
+        return ketImgGMXHR(url);
+    }
+
+   /*
+    *      Резолвит url картинки в blob-url из кэша. Колбэк
+    *      вызывается ровно один раз; при любой ошибке отдаётся
+    *      исходный url (картинка грузится сетью, как раньше)
+    */
+
+    function ketImgResolve(url, cb) {
+        if (ketImgMemCache[url]) {
+            cb(ketImgMemCache[url]);
+            return;
+        }
+
+        if (ketImgPending[url]) {
+            ketImgPending[url].push(cb);
+            return;
+        }
+        ketImgPending[url] = [cb];
+
+        var done = function(cachedUrl) {
+            var cbs = ketImgPending[url] || [];
+            delete ketImgPending[url];
+            if (cachedUrl)
+                ketImgMemCache[url] = cachedUrl;
+            for(var i = 0; i < cbs.length; i++)
+                cbs[i](cachedUrl || url);
+        };
+
+        ketImgDBGet(url, function(blob) {
+            if (blob) {
+                done(URL.createObjectURL(blob));
+                return;
+            }
+
+            ketImgFetchBlob(url)
+                .then(function(blob) {
+                    // HTML-страницы ошибок в кэш не пишем
+                    if (
+                        !blob ||
+                        !blob.size ||
+                        (blob.type && !/^image\//.test(blob.type))
+                    )
+                        throw new Error('not an image');
+                    ketImgDBPut(url, blob);
+                    done(URL.createObjectURL(blob));
+                })
+                .catch(function() { done(null); });
+        });
+    }
+
+   /*
+    *      Ставит img.src через кэш: пока кэш холодный — оригинальный
+    *      url (картинка видна сразу), после прогрева src подменяется
+    *      на blob-url
+    */
+
+    function ketImg(el, url) {
+        if (!el || !url)
+            return;
+
+        el.setAttribute('data-ket-img', url);
+
+        if (ketImgMemCache[url]) {
+            el.src = ketImgMemCache[url];
+            return;
+        }
+
+        el.src = url;
+
+        ketImgResolve(url, function(cachedUrl) {
+            // подменяем, только если элементу за это время
+            // не поставили другую картинку (тогглы иконок)
+            if (el.getAttribute('data-ket-img') == url)
+                el.src = cachedUrl;
+        });
+    }
+
+    function ketImgPreload() {
+        var urls = [];
+        var i, key;
+
+        for(var k in icons)
+            urls.push(icons[k]);
+
+        var defs = getSmileyDefinitions();
+        for(i = 0; i < defs.length; i++)
+            urls.push(defs[i].url);
+
+        urls.push('https://1chan.ca/ico/new.png');
+
+        // пользовательские смайлы и картинки
+        for(i = 0; i < localStorage.length; i++) {
+            key = localStorage.key(i);
+            if (/^smile-/.test(key) || /^image-.+$/.test(key))
+                urls.push(localStorage.getItem(key));
+        }
+
+        for(i = 0; i < urls.length; i++)
+            ketImgResolve(urls[i], function() {});
     }
 
     var gifSmileList = [
@@ -655,7 +913,7 @@
         for(var i=0; i < hideButtons.length; i++) {
             var hideButtonImg = hideButtons[i].getElementsByTagName('img')[0];
             if (hideButtonImg)
-                hideButtonImg.setAttribute("src", icons['hide']);
+                ketImg(hideButtonImg, icons['hide']);
             hideButtons[i].onclick = function() {
                 hidePost(this.parentNode.parentNode);
                 return false;
@@ -755,7 +1013,7 @@
                 }
                 var buttonImg = button.getElementsByTagName('img')[0];
                 if (buttonImg)
-                    buttonImg.setAttribute("src", icons['show']);
+                    ketImg(buttonImg, icons['show']);
             }
         } else {
             if (node.parentNode)
@@ -797,7 +1055,7 @@
             }
             var buttonImg = button.getElementsByTagName('img')[0];
             if (buttonImg)
-                buttonImg.setAttribute("src", icons['hide']);
+                ketImg(buttonImg, icons['hide']);
         }
         localStorage.removeItem(node.id);
         var tempHidden = JSON.parse(localStorage.getItem('temp_' + node.id));
@@ -912,7 +1170,11 @@
                 callbacks[i](null);
         };
 
-        image.src = url;
+        // src через кэш, и только один раз: повторная установка
+        // сгенерировала бы лишний onload после delete smileySizePending
+        ketImgResolve(url, function(cachedUrl) {
+            image.src = cachedUrl;
+        });
     }
 
 
@@ -987,7 +1249,7 @@
                 var img = document.createElement('img');
 
                 img.className = 'smiley';
-                img.src = smile.url;
+                ketImg(img, smile.url);
                 img.alt = '';
 
                 getSmileySize(smile.url, (function(img) {
@@ -1061,8 +1323,42 @@
         });
     }
 
+   /*
+    *      Последнее активное поле ввода: на страницах вроде
+    *      /news/add полей несколько (text и text_full) — вставка
+    *      идёт в то, с которым юзер взаимодействовал последним
+    */
+
+    var ketActiveTextarea = null;
+
+    function ketTrackTextarea(target) {
+        if (
+            target &&
+            target.tagName == 'TEXTAREA' &&
+            (
+                target.id == 'comment_form_text' ||
+                target.name == 'text' ||
+                target.name == 'text_full'
+            )
+        )
+            ketActiveTextarea = target;
+    }
+
+    function getTargetTextarea(preferred) {
+        if (ketActiveTextarea && document.contains(ketActiveTextarea))
+            return ketActiveTextarea;
+        if (preferred && document.contains(preferred))
+            return preferred;
+        if (formTextarea && document.contains(formTextarea))
+            return formTextarea;
+        return document.getElementById('comment_form_text')
+            || document.getElementsByName('text')[0]
+            || document.getElementsByName('text_full')[0]
+            || null;
+    }
+
     function addTextToForm(text, textarea) {
-        var ta = textarea || formTextarea;
+        var ta = getTargetTextarea(textarea);
         if (!ta)
             return;
         var cursor_pos = ta.selectionStart;
@@ -1111,7 +1407,7 @@
             return false;
         };
         link.title = text;
-        image.src = imgLink;
+        ketImg(image, imgLink);
         image.style.margin = "6px 3px 1px 3px";
         link.style.outline  = "none";
         link.appendChild(image);
@@ -1252,7 +1548,7 @@
         if (e && e.preventDefault)
             e.preventDefault();
 
-        var ta = textarea || formTextarea;
+        var ta = getTargetTextarea(textarea);
         var link = ta ? getSelectionText(ta) : '';
 
         if (link.length > 0) {} else {
@@ -1308,7 +1604,7 @@
 
         var modeIcons = document.querySelectorAll('.ket-remove-smiles-icon');
         for(var i = 0; i < modeIcons.length; i++)
-            modeIcons[i].src = deletingSmiles ? icons['whiteCross'] : icons['redCross'];
+            ketImg(modeIcons[i], deletingSmiles ? icons['whiteCross'] : icons['redCross']);
 
         return false;
     }
@@ -1344,7 +1640,7 @@
 
         var modeIcons = document.querySelectorAll('.ket-smiles-mode-icon');
         for(var i = 0; i < modeIcons.length; i++) {
-            modeIcons[i].src = icons[smilesMode];
+            ketImg(modeIcons[i], icons[smilesMode]);
             if (modeIcons[i].parentNode)
                 modeIcons[i].parentNode.title = smilesModeTitle();
         }
@@ -1391,7 +1687,7 @@
 
         var addSmileLink  = document.createElement("a");
         var addSmileImg = document.createElement("img");
-        addSmileImg.src = icons['addSmile'];
+        ketImg(addSmileImg, icons['addSmile']);
         addSmileLink.href = "#";
         addSmileLink.onclick = function(e) {
             addSmileClick(e, textarea);
@@ -1402,7 +1698,7 @@
 
         var removeSmilesLink  = document.createElement("a");
         var removeSmilesImg = document.createElement("img");
-        removeSmilesImg.src = deletingSmiles ? icons['whiteCross'] : icons['redCross'];
+        ketImg(removeSmilesImg, deletingSmiles ? icons['whiteCross'] : icons['redCross']);
         removeSmilesImg.className = "ket-remove-smiles-icon";
         removeSmilesLink.href = "#";
         removeSmilesLink.onclick = removeSmilesClick;
@@ -1411,7 +1707,7 @@
 
         var smilesModeLink  = document.createElement("a");
         var smilesModeImg = document.createElement("img");
-        smilesModeImg.src = icons[smilesMode];
+        ketImg(smilesModeImg, icons[smilesMode]);
         smilesModeImg.className = "ket-smiles-mode-icon";
         smilesModeLink.href = "#";
         smilesModeLink.onclick = toggleSmilesMode;
@@ -1568,7 +1864,7 @@
     }
 
     function imgClick(textarea) {
-        var ta = textarea || formTextarea;
+        var ta = getTargetTextarea(textarea);
         if (!ta)
             return;
         var link = getSelectionText(ta);
@@ -1582,7 +1878,7 @@
 
     function quoteClick(textarea) {
 
-        var ta = textarea || formTextarea;
+        var ta = getTargetTextarea(textarea);
         if (!ta)
             return;
         var text  = getSelectionText(ta);
@@ -1609,7 +1905,7 @@
 
     function bigBoldClick(textarea) {
 
-        var ta = textarea || formTextarea;
+        var ta = getTargetTextarea(textarea);
         if (!ta)
             return;
         var text = getSelectionText(ta);
@@ -1636,7 +1932,7 @@
     }
 
     function strikeThroughClick(textarea) {
-        var ta = textarea || formTextarea;
+        var ta = getTargetTextarea(textarea);
         if (!ta)
             return;
         var text = getSelectionText(ta);
@@ -1644,7 +1940,7 @@
     }
 
     function yobaClick(textarea) {
-        var ta = textarea || formTextarea;
+        var ta = getTargetTextarea(textarea);
         if (!ta)
             return;
         var selected_text = getSelectionText(ta);
@@ -1685,16 +1981,19 @@
 
         for(var k in markup) {
             var newButton = createButton(k, function() {
-                var text = getSelectionText(textarea);
-                var start = textarea.selectionStart;
-                var selection = textarea.selectionStart != textarea.selectionEnd;
+                var ta = getTargetTextarea(textarea);
+                if (!ta)
+                    return;
+                var text = getSelectionText(ta);
+                var start = ta.selectionStart;
+                var selection = ta.selectionStart != ta.selectionEnd;
                 var m = markup[this.value][0];
                 text = wrapText(text, m);
-                addTextToForm(text, textarea);
+                addTextToForm(text, ta);
                 if(selection)
-                    textarea.setSelectionRange(start, start + text.length);
+                    ta.setSelectionRange(start, start + text.length);
                 else
-                    textarea.setSelectionRange(start + m.length, start + m.length);
+                    ta.setSelectionRange(start + m.length, start + m.length);
                 });
             container.appendChild(newButton);
         }
@@ -1703,13 +2002,8 @@
             container.style.paddingTop = "4px";
             document.getElementsByName('text_full')[0].parentNode.insertBefore(container,
                                                         document.getElementsByName('text_full')[0])
-            if (!createMarkupPanel.fieldSwitcherAdded) {
-                createMarkupPanel.fieldSwitcherAdded = true;
-                document.addEventListener('click', function(event){
-                    if(/text/.test(event.target.name))
-                        formTextarea = event.target // Смена полей в news/add
-                    })
-            }
+            // смену полей text/text_full теперь покрывает общий
+            // трекер ketTrackTextarea (см. letTheSobakOut)
         } else {
             // .b-comment-form_b-uplink есть не везде (в форме быстрого
             // ответа его нет) — ищем рядом с нашей формой, иначе
@@ -1862,7 +2156,7 @@
         general.className = "general-settings-button";
 
         var generalIcon = document.createElement("img");
-        generalIcon.src = icons['settings'];
+        ketImg(generalIcon, icons['settings']);
 
         general.appendChild(generalIcon);
 
@@ -1872,7 +2166,7 @@
         hidelist.className = "hiding-list-button";
 
         var regexpIcon = document.createElement("img");
-        regexpIcon.src = icons['regexp'];
+        ketImg(regexpIcon, icons['regexp']);
 
         hidelist.appendChild(regexpIcon);
 
@@ -2370,7 +2664,7 @@
 
         var upImg = document.createElement('img');
 
-        upImg.src = 'https://1chan.ca/ico/new.png';
+        ketImg(upImg, 'https://1chan.ca/ico/new.png');
         upImg.alt = '';
         upImg.style.display = 'block';
         upImg.style.height = '16px';
@@ -2406,7 +2700,7 @@
 
         var downImg = document.createElement('img');
 
-        downImg.src = 'https://1chan.ca/ico/new.png';
+        ketImg(downImg, 'https://1chan.ca/ico/new.png');
         downImg.alt = '';
         downImg.style.display = 'block';
         downImg.style.height = '16px';
@@ -2470,6 +2764,18 @@
                 document.getElementsByName("text")[0];
 
         initSmileyRendering();
+
+        ketImgCacheInit();
+        ketImgPreload();
+
+        // Запоминаем последнее активное поле ввода (вставка
+        // смайлов/разметки идёт в него, а не в первое по счёту)
+        document.addEventListener('focus', function(e) {
+            ketTrackTextarea(e.target);
+        }, true);
+        document.addEventListener('mousedown', function(e) {
+            ketTrackTextarea(e.target);
+        }, true);
 
         if (formTextarea) {
             if (
