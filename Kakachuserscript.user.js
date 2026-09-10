@@ -2,7 +2,7 @@
 // @name        Kakach Extension Tools
 // @author      Original by postman, ayakudere, theanonym; forked by Ananim; modernized by malweena
 // @description Какаческрипт с блэкджеком и шлюхами (какач онли)
-// @version     2.0.2 (ca)
+// @version     2.0.3 (ca)
 // @icon        https://web.archive.org/web/20260616043953im_/https://1chan.ca/ico/favicons/1chan.ca.png
 // @downloadURL https://github.com/Malweena/Kakach-Extension-Tools/raw/master/Kakachuserscript.user.js
 // @match       https://1chan.ca/*
@@ -1973,6 +1973,21 @@
             "BB": bigBoldClick,
             "Y": yobaClick
         };
+            var voxButton = createButton("vox", function() {
+                var ta = getTargetTextarea(textarea);
+                if (!ta)
+                    return;
+                var text = getSelectionText(ta);
+                var start = ta.selectionStart;
+                var selection = ta.selectionStart != ta.selectionEnd;
+                text = "#%" + text + "%#";
+                addTextToForm(text, ta);
+                if(selection)
+                    ta.setSelectionRange(start, start + text.length);
+                else
+                    ta.setSelectionRange(start + 2, start + 2);
+                });
+            container.appendChild(voxButton);
 
         for (var k in buttons)
             container.appendChild(createButton(k, (function(fn, ta) {
@@ -2617,6 +2632,449 @@
     }
 
 
+
+
+
+
+
+
+
+   /******************************************************************
+    *                                                                *
+    *                    M O B I L E   V I E W                       *
+    *                                                                *
+    *      Порт мобильного функционала с менее кривого колчка:       *
+    *      выдвижные боковые панели с тогглами в топ-панели          *
+    *      (брейкпоинт 1060px вместо 670px) и мобильная кака         *
+    *      (945px). Стили инжектятся одним <style>, цвета            *
+    *      зависят от темы страницы.                                 *
+    *                                                                *
+    ******************************************************************/
+
+
+
+
+
+   /*
+    *      Определение темы по виджету каки: у крайнего
+    *      родительского div'а (position:fixed) инлайновый
+    *      background: white = «Нормальная»,
+    *      black = «Омская»
+    */
+
+    function ketDetectTheme() {
+        var node = document.querySelector('.js-poo-target');
+
+        while (node && node.nodeType == 1) {
+            var bg = node.style ? node.style.backgroundColor : '';
+
+            if (/^black$/i.test(bg) || bg == 'rgb(0, 0, 0)')
+                return 'omsk';
+
+            if (/^white$/i.test(bg) || bg == 'rgb(255, 255, 255)')
+                return 'normal';
+
+            node = node.parentNode;
+        }
+
+        // запасной вариант — по подключённому файлу стилей
+        var links = document.getElementsByTagName('link');
+        for (var i = 0; i < links.length; i++) {
+            if (/production-omsk\.css/.test(links[i].href || ''))
+                return 'omsk';
+        }
+
+        return 'normal';
+    }
+
+
+    function ketMobileViewCSS(theme) {
+
+        var themeCSS;
+
+        if (theme == 'omsk') {
+            themeCSS = `
+    .l-left-panel-wrap,
+    .l-right-panel-wrap {
+        background-color: #000;
+        border-color: #444444;
+    }
+    .l-left-panel-wrap.mv-panel-shown,
+    .l-right-panel-wrap.mv-panel-shown {
+        box-shadow: 0 0 40px #000000, 0 0 0 100vw #00000069;
+    }
+    .mv-panel-shown::after {
+        background-color: black;
+    }
+    .mv-panel-toggle-inmenu {
+        color: #a4a4a4;
+    }
+    .mv-panel-toggle-inmenu:hover {
+        color: #d2d2d2;
+    }
+    .mv-panel-toggle-inpanel {
+        color: #a4a4a4;
+    }
+    .mv-panel-toggle-inpanel:hover {
+        color: #d5d5d5;
+    }
+`;
+        } else {
+            themeCSS = `
+    .l-left-panel-wrap,
+    .l-right-panel-wrap {
+        background-color: #fff;
+        border-color: #bbbbbb;
+    }
+    .l-left-panel-wrap.mv-panel-shown,
+    .l-right-panel-wrap.mv-panel-shown {
+        box-shadow: 0 0 40px #000000, 0 0 0 100vw #00000069;
+    }
+    .mv-panel-toggle-inmenu {
+        color: #7f7f7f;
+    }
+    .mv-panel-toggle-inmenu:hover {
+        color: #000;
+    }
+`;
+        }
+
+        return `
+
+/* ----- базовые правила (как у форка, вне media-запросов) ----- */
+
+.l-left-panel-wrap,
+.l-right-panel-wrap {
+    transition: transform 0s, visibility 0s;
+}
+
+.mv-panel-toggle {
+    display: none;
+}
+
+/* ----- выдвижные панели: @media (max-width: 1060px) форка ----- */
+
+@media (max-width: 1060px) {
+    body {
+        min-width: auto;
+    }
+    .l-left-panel-wrap,
+    .l-right-panel-wrap {
+        position: fixed;
+        top: 0;
+        z-index: 3;
+        height: 100%;
+        border: 0px solid;
+        width: 200px;
+        visibility: hidden;
+        overflow: auto;
+    }
+    .l-left-panel-wrap.mv-panel-transition,
+    .l-right-panel-wrap.mv-panel-transition {
+        transition: transform .2s, visibility 0s .2s;
+    }
+    .l-left-panel-wrap.mv-panel-transition.mv-panel-shown,
+    .l-right-panel-wrap.mv-panel-transition.mv-panel-shown {
+        transition: transform .2s;
+    }
+    .l-left-panel-wrap {
+        left: 0;
+        transform: translate(-100%, 0);
+        border-right-width: 1px;
+    }
+    .l-right-panel-wrap {
+        right: 0;
+        transform: translate(100%, 0);
+        border-left-width: 1px;
+    }
+    .l-left-panel-wrap.mv-panel-shown,
+    .l-right-panel-wrap.mv-panel-shown {
+        transform: none;
+        visibility: visible;
+    }
+    .mv-panel-shown::before {
+        content: "";
+        width: 100%;
+        height: 100%;
+        left: 0;
+        top: 0;
+        position: fixed;
+        z-index: -1;
+        transition: none;
+    }
+    .mv-panel-shown::after {
+        content: "";
+        width: 100%;
+        height: 100%;
+        position: absolute;
+        left: 0px;
+        top: 0px;
+        z-index: -1;
+    }
+    .b-menu-panel .b-menu-panel_b-links ul {
+        width: 100%;
+    }
+    .b-menu-panel .b-menu-panel_b-links ul li {
+        border-radius: 0;
+        padding: 8px 10px;
+    }
+    .b-links-panel {
+        margin: 0 10px;
+    }
+    .b-links-panel .b-links-panel_b-links .b-live-entry {
+        width: auto;
+        margin: 16px 0;
+    }
+    .b-top-panel {
+        display: flex;
+        flex-wrap: wrap;
+        height: auto;
+        width: 100%;
+        padding: 0 32px;
+        box-sizing: border-box;
+        position: relative;
+    }
+    .b-top-panel ul {
+        padding-left: 6px;
+        padding-bottom: 5px;
+        width: 100%;
+    }
+    .mv-panel-toggle {
+        display: inline-block;
+        position: absolute;
+        cursor: pointer;
+        width: 24px;
+    }
+    .mv-panel-toggle-inmenu {
+        top: 0px;
+        height: 100%;
+        border-radius: 3px;
+    }
+    .mv-panel-toggle-inmenu-left {
+        left: 0px;
+    }
+    .mv-panel-toggle-inmenu-right {
+        right: 0px;
+    }
+    .mv-panel-toggle-inmenu::before {
+        content: '';
+        height: 2px;
+        background: currentColor;
+        width: 13px;
+        position: absolute;
+        left: 6px;
+        top: 50%;
+        translate: 0 calc(-100% - 3px);
+        /* три полоски гамбургера: сама полоска + две тенями
+           (у форка это правило лежит в themes/omsk.css) */
+        box-shadow: 0 2px 0 transparent, 0 4px 0 currentColor, 0 6px 0 transparent, 0 8px 0 currentColor;
+    }
+    .mv-panel-toggle-inpanel {
+        height: 24px;
+        top: 0px;
+        transition: color .2s;
+    }
+    .l-left-panel-wrap .mv-panel-toggle {
+        right: 0;
+    }
+    .l-right-panel-wrap .mv-panel-toggle {
+        left: 0;
+    }
+    .mv-panel-toggle-inpanel::before,
+    .mv-panel-toggle-inpanel::after {
+        content: '';
+        background: currentColor;
+        height: 2px;
+        width: 16px;
+        position: absolute;
+        top: 50%;
+        transform: translate(0, -1px) rotate(45deg);
+        left: 4px;
+    }
+    .mv-panel-toggle-inpanel::after {
+        transform: translate(0, -1px) rotate(-45deg);
+    }
+${themeCSS}
+}
+
+/* ----- кака: @media (max-width: 945px) форка ----- */
+/* у 1chan.ca стили каки инлайновые, поэтому !important */
+
+@media (max-width: 945px) {
+    .js-poo-wrapper {
+        position: fixed;
+        bottom: 3px !important;
+        right: 3px !important;
+        margin-left: 0 !important;
+        scale: .5;
+        opacity: .7;
+        transform-origin: bottom right;
+        transition: scale .2s, opacity .2s;
+    }
+    .js-poo-wrapper:hover {
+        scale: 1;
+        opacity: 1;
+    }
+}
+
+/* ----- панели во всю ширину на узких экранах (форк, 420px) ----- */
+
+@media (max-width: 420px) {
+    .l-left-panel-wrap,
+    .l-right-panel-wrap {
+        width: 100%;
+    }
+}
+
+/* ----- базовое центрирование «×» (у форка идёт после media) ----- */
+
+.mv-panel-toggle-inpanel {
+    width: 100%;
+    position: relative;
+}
+.mv-panel-toggle-inpanel::before,
+.mv-panel-toggle-inpanel::after {
+    left: 50%;
+    transform: translate(-50%, -1px) rotate(45deg);
+}
+.mv-panel-toggle-inpanel::after {
+    transform: translate(-50%, -1px) rotate(-45deg);
+}
+`;
+    }
+
+    function ketWidenMobileBreakpoint() {
+        var cssText = '';
+
+        for (var s = 0; s < document.styleSheets.length; s++) {
+            var rules;
+
+            try {
+                rules = document.styleSheets[s].cssRules;
+            } catch(e) {
+                continue;
+            }
+
+            if (!rules)
+                continue;
+
+            for (var r = 0; r < rules.length; r++) {
+                var rule = rules[r];
+                var mediaText = rule.conditionText ||
+                    (rule.media ? rule.media.mediaText : '');
+
+                if (!mediaText || !rule.cssRules || !/max-width/.test(mediaText))
+                    continue;
+
+                cssText += '@media ' +
+                    mediaText.replace(/max-width:\s*670px/, 'max-width: 700px') +
+                    ' {\n';
+
+                for (var k = 0; k < rule.cssRules.length; k++)
+                    cssText += rule.cssRules[k].cssText + '\n';
+
+                cssText += '}\n';
+            }
+        }
+
+        if (!cssText)
+            return;
+
+        var style = document.createElement('style');
+        style.id = 'ket-mobile-breakpoint';
+        style.textContent = cssText;
+        document.head.appendChild(style);
+    }
+
+    function ketInitMobilePanels() {
+        $('.b-top-panel').prepend(
+            '<div class="mv-panel-toggle mv-panel-toggle-inmenu mv-panel-toggle-inmenu-left" data-panel="left"></div>' +
+            '<div class="mv-panel-toggle mv-panel-toggle-inmenu mv-panel-toggle-inmenu-right" data-panel="right"></div>'
+        );
+
+        $('.mv-panel-toggle-inmenu').each(function() {
+            var $t = $(this);
+            var sel = '.l-' + $t.data('panel') + '-panel-wrap';
+
+            $t.click(function() {
+                var $p = $(sel);
+                if (!$p.hasClass('mv-panel-shown')) {
+                    $p.addClass('mv-panel-shown mv-panel-transition');
+                }
+            });
+        });
+
+        var sides = ['left', 'right'];
+
+        for (var i = 0; i < sides.length; i++) {
+            (function(lr) {
+                var $p = $('.l-' + lr + '-panel-wrap');
+
+                if (!$p.length)
+                    return;
+
+                var hide = function() {
+                    $p.removeClass('mv-panel-shown');
+                    setTimeout(function() {
+                        $p.removeClass('mv-panel-transition');
+                    }, 200);
+                };
+
+                $p.click(function(ev) {
+                    var bcr = $p[0].getBoundingClientRect();
+
+                    if (
+                        (lr == 'left' && ev.pageX > bcr.width) ||
+                        (lr == 'right' && ev.pageX < bcr.x)
+                    ) {
+                        hide();
+                    }
+                });
+
+                $('<div class="mv-panel-toggle mv-panel-toggle-inpanel"></div>')
+                    .prependTo($p)
+                    .click(hide);
+            })(sides[i]);
+        }
+    }
+
+
+
+
+
+   /*
+    *      Точка входа мобильного вида
+    */
+
+    function ketInitMobileView() {
+        var theme = ketDetectTheme();
+        var pooTarget = document.querySelector('.js-poo-target');
+        if (
+            pooTarget &&
+            pooTarget.parentNode &&
+            pooTarget.parentNode.nodeType == 1
+        )
+            pooTarget.parentNode.classList.add('js-poo-wrapper');
+
+        var style = document.createElement('style');
+        style.id = 'ket-mobile-view';
+
+        ketWidenMobileBreakpoint();
+
+        style.textContent = ketMobileViewCSS(theme);
+        document.head.appendChild(style);
+
+        ketInitMobilePanels();
+    }
+
+
+
+
+
+
+
+
+
    /*
     *      Main
     */
@@ -2626,14 +3084,22 @@
             return;
 
         if(
+            /\.ca\/alone\/?\d*/.test(document.URL) ||
+            /\.ca\/alone\/res\/?\d*/.test(document.URL) ||
             /\.ca\/int\/?\d*/.test(document.URL) ||
+            /\.ca\/int\/res\/?\d*/.test(document.URL) ||
             /\.ca\/rail\/?\d*/.test(document.URL) ||
+            /\.ca\/rail\/res\/?\d*/.test(document.URL) ||
             /\.ca\/oo\/?\d*/.test(document.URL) ||
+            /\.ca\/oo\/res\/?\d*/.test(document.URL) ||
             /\.ca\/news\/?\d*/.test(document.URL) ||
+            /\.ca\/news\/res\/?\d*/.test(document.URL) ||
             /\.ca\/news\/all\/?\d*/.test(document.URL) ||
-            /\.ca\/news\/fav\/?\d*/.test(document.URL) ||
+            /\.ca\/news\/all\/res\/?\d*/.test(document.URL) ||
             /\.ca\/news\/hidden\/?\d*/.test(document.URL) ||
-            /\.ca\/news\/res\/?\d*/.test(document.URL)
+            /\.ca\/news\/hidden\/?\d*/.test(document.URL) ||
+            /\.ca\/news\/fav\/?\d*/.test(document.URL) ||
+            /\.ca\/service\/modlog\/?\d*/.test(document.URL)
         ) {} else {
             return;
         }
@@ -2662,6 +3128,9 @@
         upSpan.className = 'scroll-svg-up';
         upSpan.setAttribute("style", 'width: 100%;height: 100%;display: flex;justify-content:center;align-items:center;background-repeat: no-repeat;background-position: center;background-size: contain;');
 
+        var upDiv = document.createElement('div');
+        upDiv.setAttribute("style", 'height: 13px;display: flex;align-items: end;overflow: clip;');
+
         var upImg = document.createElement('img');
 
         ketImg(upImg, 'https://1chan.ca/ico/new.png');
@@ -2671,7 +3140,8 @@
         upImg.style.width = '16px';
         upImg.style.transform = 'rotate(180deg)';
 
-        upSpan.appendChild(upImg);
+        upSpan.appendChild(upDiv);
+        upDiv.appendChild(upImg);
         up.appendChild(upSpan);
 
         var down = document.createElement('a');
@@ -2698,6 +3168,9 @@
         downSpan.className = 'scroll-svg-down';
         downSpan.setAttribute("style", 'width: 100%;height: 100%;display: flex;justify-content:center;align-items:center;background-repeat: no-repeat;background-position: center;background-size: contain;');
 
+        var downDiv = document.createElement('div');
+        downDiv.setAttribute("style", 'height: 13px;display: flex;align-items: start;overflow: clip;');
+
         var downImg = document.createElement('img');
 
         ketImg(downImg, 'https://1chan.ca/ico/new.png');
@@ -2706,7 +3179,8 @@
         downImg.style.height = '16px';
         downImg.style.width = '16px';
 
-        downSpan.appendChild(downImg);
+        downSpan.appendChild(downDiv);
+        downDiv.appendChild(downImg);
         down.appendChild(downSpan);
 
         container.appendChild(up);
@@ -2836,6 +3310,8 @@
         createMenu();
 
         registerQuickReplyWatcher();
+
+        ketInitMobileView();
     }
 
     if(navigator.appName == "Opera")
