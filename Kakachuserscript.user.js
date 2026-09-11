@@ -2,7 +2,7 @@
 // @name        Kakach Extension Tools
 // @author      Original by postman, ayakudere, theanonym; forked by Ananim; modernized by malweena
 // @description Какаческрипт с блэкджеком и шлюхами (какач онли)
-// @version     2.0.4 (ca)
+// @version     2.0.5 (ca)
 // @icon        https://web.archive.org/web/20260616043953im_/https://1chan.ca/ico/favicons/1chan.ca.png
 // @downloadURL https://github.com/Malweena/Kakach-Extension-Tools/raw/master/Kakachuserscript.user.js
 // @match       https://1chan.ca/*
@@ -51,7 +51,7 @@
         'Панель смайлов',
         'Панель разметки',
         'Раскрытие спойлеров текста',
-        'Раскрытие спойлеров картинок',
+        'Раскрытие спойлеров вложений',
         'Показывать скрытые комментарии',
         'Скрывать ответы на скрытый пост',
         'Убирать панель по клику',
@@ -1373,13 +1373,15 @@
         if (!link)
             return "";
         if (/imgur/.test(link)) {
-            var e = /imgur.com\/([^\]\[]+)/.exec(link);
-			var d = e[1].replace('.jpg', '');
-			var c = d.replace('.webm', '');
-			var b = c.replace('.png', '');
-			var a = b.replace('.gif', '');
+            var g = /imgur.com\/([^\]\[]+)/.exec(link);
+            var a = g[1].replace(/\.(jpg|jpeg|webp|webm|png|gif|apng|tiff|pdf|mp4|mov)$/i, '');
             if (a) {
                 return '[i:' + a + ':]';
+            }
+        } else if (/catbox/.test(link)) {
+            var a = /catbox.moe\/([^\]\[]+)/.exec(link);
+            if (a) {
+                return '[c:' + a[1] + ':]';
             }
         } else {
             return '[' + link + ']';
@@ -1876,6 +1878,19 @@
         }
     }
 
+        function cbxClick(textarea) {
+        var ta = getTargetTextarea(textarea);
+        if (!ta)
+            return;
+        var link = getSelectionText(ta);
+
+        if (link.length > 0) {
+            addTextToForm(wrapImageLink(link), ta);
+        } else {
+            addTextToForm(wrapImageLink(prompt('Полная ссылка на изображение на катбоксе:')), ta);
+        }
+    }
+
     function quoteClick(textarea) {
 
         var ta = getTargetTextarea(textarea);
@@ -1967,7 +1982,8 @@
         };
 
         var buttons = {
-            "img": imgClick,
+            "imgur": imgClick,
+            "catbox": cbxClick,
             ">": quoteClick,
             "S": strikeThroughClick,
             "BB": bigBoldClick,
@@ -2051,6 +2067,16 @@
         for (var i = 0; i < images.length; i++) {
             if (images[i].classList.contains('spoiler-media'))
                 images[i].style.display = 'block';
+        }
+        var videoes = document.getElementsByTagName('video');
+        for (var i = 0; i < videoes.length; i++) {
+            if (videoes[i].classList.contains('spoiler-media'))
+                videoes[i].style.display = 'block';
+        }
+        var audioes = document.getElementsByTagName('audio');
+        for (var i = 0; i < audioes.length; i++) {
+            if (audioes[i].classList.contains('spoiler-media'))
+                audioes[i].style.display = 'block';
         }
 
         var spoilers = document.getElementsByClassName('eye-icon');
