@@ -2,7 +2,7 @@
 // @name        Kakach Extension Tools
 // @author      Original by postman, ayakudere, theanonym; forked by Ananim; modernized by malweena
 // @description Какаческрипт с блэкджеком и шлюхами (какач онли)
-// @version     2.0.3 (ca)
+// @version     2.0.4 (ca)
 // @icon        https://web.archive.org/web/20260616043953im_/https://1chan.ca/ico/favicons/1chan.ca.png
 // @downloadURL https://github.com/Malweena/Kakach-Extension-Tools/raw/master/Kakachuserscript.user.js
 // @match       https://1chan.ca/*
@@ -2940,6 +2940,18 @@ ${themeCSS}
 .mv-panel-toggle-inpanel::after {
     transform: translate(-50%, -1px) rotate(-45deg);
 }
+
+@media (max-width: 700px) {
+    .ket-smile-panel {
+        width: calc(100% - 2px) !important;
+    }
+    #comment_form .ket-smile-panel {
+        width: calc(100% - 30px) !important;
+    }
+    .b-board-form .ket-smile-panel {
+        width: calc(100% - 30px) !important;
+    }
+}
 `;
     }
 
@@ -3129,7 +3141,7 @@ ${themeCSS}
         upSpan.setAttribute("style", 'width: 100%;height: 100%;display: flex;justify-content:center;align-items:center;background-repeat: no-repeat;background-position: center;background-size: contain;');
 
         var upDiv = document.createElement('div');
-        upDiv.setAttribute("style", 'height: 13px;display: flex;align-items: end;overflow: clip;');
+        upDiv.setAttribute("style", 'height: 1em;display: flex;align-items: end;overflow: clip;');
 
         var upImg = document.createElement('img');
 
@@ -3169,7 +3181,7 @@ ${themeCSS}
         downSpan.setAttribute("style", 'width: 100%;height: 100%;display: flex;justify-content:center;align-items:center;background-repeat: no-repeat;background-position: center;background-size: contain;');
 
         var downDiv = document.createElement('div');
-        downDiv.setAttribute("style", 'height: 13px;display: flex;align-items: start;overflow: clip;');
+        downDiv.setAttribute("style", 'height: 1em;display: flex;align-items: start;overflow: clip;');
 
         var downImg = document.createElement('img');
 
